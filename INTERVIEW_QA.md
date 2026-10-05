@@ -13,12 +13,13 @@ I would demonstrate the linked implementation or examples and distinguish that e
 ## 2. How is this repository organized?
 
 - [`src/segments/main.py`](src/segments/main.py): Implementation or supporting configuration.
+- [`src/segments/ops.py`](src/segments/ops.py): Implementation or supporting configuration.
 - [`src/segments/segment.py`](src/segments/segment.py): Implementation or supporting configuration.
 - [`requirements.txt`](requirements.txt): Implementation or supporting configuration.
 - [`src/segments/__init__.py`](src/segments/__init__.py): Implementation or supporting configuration.
-- [`tests/test_segment.py`](tests/test_segment.py): Executable checks and regression examples.
-- [`.github/workflows/ci.yml`](.github/workflows/ci.yml): GitHub Actions job definitions.
-- [`README.md`](README.md): Project explanations or operating notes.
+- [`Dockerfile`](Dockerfile): Container build/service configuration.
+- [`Makefile`](Makefile): Implementation or supporting configuration.
+- [`docker-compose.yml`](docker-compose.yml): Container build/service configuration.
 
 [PROJECT_ARCHITECTURE.md](PROJECT_ARCHITECTURE.md) contains the component diagram and the implementation walkthrough.
 
@@ -51,7 +52,11 @@ The implementation calls `InputError`, `abs`, `assigned.append`, `float`, `isins
 
 Explicit failure paths include:
 
-- `HTTPException(status_code=422, detail=str(exc))` in [`src/segments/main.py`](src/segments/main.py#L17).
+- `HTTPException(status_code=422, detail=str(exc))` in [`src/segments/main.py`](src/segments/main.py#L19).
+- `HTTPException(status_code=404, detail='workspace not found')` in [`src/segments/ops.py`](src/segments/ops.py#L77).
+- `HTTPException(status_code=404, detail='job not found')` in [`src/segments/ops.py`](src/segments/ops.py#L100).
+- `HTTPException(status_code=404, detail='job not found')` in [`src/segments/ops.py`](src/segments/ops.py#L109).
+- `HTTPException(status_code=403, detail='production apply is disabled in this lab')` in [`src/segments/ops.py`](src/segments/ops.py#L113).
 - `InputError('need at least two rows')` in [`src/segments/segment.py`](src/segments/segment.py#L7).
 - `InputError('each row needs numeric spend')` in [`src/segments/segment.py`](src/segments/segment.py#L13).
 
@@ -59,29 +64,35 @@ I would test both the condition that reaches each exception and the caller that 
 
 ## 5. Which test would you use to demonstrate correctness?
 
-[`tests/test_segment.py`](tests/test_segment.py#L7) contains `test_splits_low_and_high`:
+[`tests/test_ops.py`](tests/test_ops.py#L8) contains `test_readyz`:
 
 ```python
-def test_splits_low_and_high():
-    payload = client.post("/segment", json={"rows": [{'id': 'a', 'spend': 10}, {'id': 'b', 'spend': 12}, {'id': 'c', 'spend': 90}]}).json()
-    clusters = {row["spend"]: row["cluster"] for row in payload["rows"]}
-    lows = [v for k, v in clusters.items() if k == min(clusters)]
-    highs = [v for k, v in clusters.items() if k == max(clusters)]
-    assert lows[0] != highs[0]
+def test_readyz():
+    r = client.get("/v1/readyz")
+    assert r.status_code == 200
+    assert r.json()["status"] == "ready"
 ```
 
 This is a concrete regression example from the repository. Its assertions establish that case; they do not establish behavior for every input or under production load.
 
 ## 6. What HTTP interface does the code expose?
 
-- `GET /healthz` → `healthz` in [`src/segments/main.py`](src/segments/main.py#L8).
-- `POST /segment` → `post_segment` in [`src/segments/main.py`](src/segments/main.py#L13).
+- `GET /healthz` → `healthz` in [`src/segments/main.py`](src/segments/main.py#L10).
+- `POST /segment` → `post_segment` in [`src/segments/main.py`](src/segments/main.py#L15).
+- `GET /readyz` → `readyz` in [`src/segments/ops.py`](src/segments/ops.py#L44).
+- `POST /workspaces` → `create_workspace` in [`src/segments/ops.py`](src/segments/ops.py#L49).
+- `GET /workspaces` → `list_workspaces` in [`src/segments/ops.py`](src/segments/ops.py#L66).
+- `POST /workspaces/{workspace_id}/jobs` → `create_job` in [`src/segments/ops.py`](src/segments/ops.py#L73).
+- `GET /jobs/{job_id}` → `get_job` in [`src/segments/ops.py`](src/segments/ops.py#L96).
+- `POST /jobs/{job_id}/approve` → `approve_job` in [`src/segments/ops.py`](src/segments/ops.py#L105).
 
 These are literal decorators. Application/router prefixes, authentication, and middleware must be checked in the corresponding setup code.
 
-## 7. How would you investigate data ownership and persistence?
+## 7. Where does state live, and what happens with multiple workers?
 
-Trace the data/configuration files and the code that reads or writes them in the component table. Identify which files are examples, which records are mutable, and which external store is actually configured. I would document those facts before discussing retention, backup, or tenant isolation.
+Module-level containers include `_WORKSPACES`, `_JOBS`, `_AUDIT`, `_METRICS` in [`src/segments/ops.py`](src/segments/ops.py).
+
+These containers belong to a Python process. Inspect which are constant fixtures and which are mutated. Mutable process state needs an explicit shared-storage or synchronization strategy before multiple workers can provide consistent behavior.
 
 ## 8. How would another engineer reproduce your walkthrough?
 
@@ -124,3 +135,9 @@ The implementation in [`src/segments/segment.py`](src/segments/segment.py#L5) br
 - `not isinstance(rows, list) or len(rows) < 2`
 
 A useful extension is a table-driven test that covers each condition just below, at, and above its boundary where applicable. These expressions are the current rules; changing them changes behavior and should be justified by the project’s acceptance criteria.
+
+## 13. What does the operations plane add, and where is its limit?
+
+[`src/segments/ops.py`](src/segments/ops.py) declares `GET /readyz`, `POST /workspaces`, `GET /workspaces`, `POST /workspaces/{workspace_id}/jobs`, `GET /jobs/{job_id}`, `POST /jobs/{job_id}/approve`, `GET /audit`, `GET /metrics`. Inspect the application’s `include_router` call for its URL prefix.
+
+Its state containers are `_WORKSPACES`, `_JOBS`, `_AUDIT`, `_METRICS`. The job-approval handler defines whether a target is accepted or refused; check that branch and the associated tests instead of treating a recorded job as a successful infrastructure apply.
