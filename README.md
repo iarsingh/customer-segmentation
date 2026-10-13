@@ -1,5 +1,12 @@
 # Customer Segmentation
 
+## Overview
+
+A small customer segmentation service that splits customers into low-spend and high-spend clusters. It runs a two-center clustering on spend, starting the centers at the minimum and maximum values, and returns each customer's segment from a `POST /segment` endpoint. A versioned `/v1` ops API adds workspaces, tenant isolation, job approval and audit records.
+
+- **Built with:** Python, pytest, Docker, GitHub Actions
+- **Scope:** Local data science lab with tests; it does not call a hosted model and does not apply production changes.
+
 <!-- project-guide:start -->
 ## Project guide
 
